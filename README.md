@@ -1,8 +1,6 @@
 # 2023 QB Stats vs Madden 24 Ratings
 See if stats from the 2022-23 season can predict Madden Ratings, and if general public sentiment lines up
 
-Starting my sports analytics side-project journey with analyzing QB Stats vs their Madden 24 Ratings (Box Score Stats 1st, Advanced Stats 2nd). 
-
 Main goal is to see if stats from the 2022-23 season can predict Madden Ratings, and if general public sentiment lines up. A thread:
 
 First, looking at Basic / Box Score stats, I chose only stats that a viewer could see or calculate when watching a game (Yards, Attempts, # 1st Downs, etc). These were then standardized, and then summed, to create a general ranking of QBs via these counting stats (x-axis). 
