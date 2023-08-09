@@ -1,0 +1,256 @@
+---
+title: "MaddenRatings_QB"
+output: html_document
+date: "2023-07-25"
+---
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+```
+
+Load QB Box Score Stats
+-- Box Score stats are defined as stats that are either directly from a box score, or can be inferred from a box score / play by play (1st Downs, game winning drives)
+```{r}
+qbstats_boxscore = read.csv('QB Rankings - StandardStatsExp.csv')
+head(qbstats_boxscore)
+```
+X1D: # 1st Downs 
+Y.A: Yards per Attempt
+Y.C: Yards per Completion 
+Y.G: Yards per Game
+GWD: Game Winning Drives 
+
+```{r}
+qbstats_boxscore$YDS = as.numeric(gsub(",", "", qbstats_boxscore$YDS))
+```
+
+Load Madden Ratings 2024
+```{r}
+qb_maddenratings = read.csv('QB Rankings - MaddenRatings.csv')
+
+#trim trailing whitespace from player name
+qb_maddenratings$Player = trimws(qb_maddenratings$Player)
+head(qb_maddenratings)
+
+```
+
+Method 1: 
+Use basic box score stats, standardize each stat, rank by sum of standardized values.
+
+-- Method assumes each stat is equally valuable 
+-- Some stats are per game / per something, some are season total
+
+Standardize each stat
+```{r}
+qbstats_boxscore_standardized = qbstats_boxscore
+qbstats_boxscore_standardized[3:13] <- as.data.frame(scale(qbstats_boxscore_standardized[3:13]))
+
+#multiply interceptions by -1 to reflect value
+qbstats_boxscore_standardized$INT = qbstats_boxscore_standardized$INT * -1
+qbstats_boxscore_standardized
+```
+
+Get sum of rows for each player 
+```{r}
+qbstats_boxscore_standardized[3:14] = 
+  qbstats_boxscore_standardized[3:13] %>%
+    mutate(sum = rowSums(.))
+```
+
+Join table to madden ratings 
+```{r}
+qbstats_boxscore_standardized_ratings = qbstats_boxscore_standardized %>%
+  left_join(qb_maddenratings, by = c('Player')) %>%
+  arrange(desc(sum))
+
+
+qb_full = qbstats_boxscore_standardized_ratings %>%
+  select('Player', 'Age', 'sum', 'OVR') %>%
+  na.omit() 
+```
+
+Output graph mapping standardized stats vs Madden Overall
+```{r}
+ggplot(qb_full, aes(x = sum, y = OVR)) + 
+  geom_point() + 
+  geom_text_repel(aes(label = Player)) +
+  geom_smooth(se = FALSE, color = '#D50A0A') +
+  theme_classic() +
+  labs(title = '2023 QB Box Score Stats vs Madden 24 Rating',
+     subtitle = 'Starting QBs production start to impact rating for above average QBs, at the ~80 overall tier',
+    x = 'Sum of Standardized Box Score Metrics',
+       y = 'Madden 24 Overall')
+```
+
+## Clustering to create tiers for QBs
+```{r}
+#install.packages("factoextra")
+library(factoextra)
+km <- kmeans(qb_full[,3:4], centers = 6, nstart = 25)
+fviz_cluster(km, data = qb_full[,3:4])
+```
+
+-- Mahomes distinguishes himself when we increase to 8 tiers
+-- With just 3 tiers, theres a line below Trevor Lawrence at about the y = -x line, distinguishing solid starting QBs and those with questionable QB production 
+
+
+Create Graph -- but beware, everytime the cluster funciton is run above, the tier numbers change, so the tiers may be mislabeled
+```{r fig.height = 8, fig.width = 13}
+qb_full$cluster = km$cluster
+qb_full$`QB Cluster` = ifelse(qb_full$cluster == 2, "Tier 1: Elite QBs, Elite Production", 
+                          ifelse(qb_full$cluster == 3, "Tier 2: Top 10 in Production, but not Elite / Un-Proven",
+                            ifelse(qb_full$cluster == 4, "Tier 3: Average '23 Production, Elite Production in Past (Legacy)",
+                              ifelse(qb_full$cluster == 6, "Tier 6: Unique 2023 Seasons, Volatile Rating for Next Couple Years",
+                                ifelse(qb_full$cluster == 1, "Tier 4: Solid Starter QBs, Average to Above Average Production",
+                                  ifelse(qb_full$cluster == 5, "Tier 5: Below Average Production or Derailed by Injury",
+                                       "Not Elite"))))))
+
+ggplot(qb_full, aes(x = sum, y = OVR, color = `QB Cluster`)) + 
+  geom_point() + 
+  geom_text_repel(aes(label = Player)) +
+  geom_smooth(se = FALSE, color = '#D50A0A') +
+  theme_classic() +
+  labs(title = '2023 QB Box Score Stats vs Madden 24 Rating',
+     subtitle = 'Starting QBs production impacts Madden Rating most for above average QBs, at the > 80 overall tier',
+    x = 'Sum of Standardized Box Score Metrics',
+       y = 'Madden 24 Overall')
+```
+
+1. Lamar is the biggest outlier by far, given he still played 12 games, can regress to the mid-80s with an average season
+2. Based on production, Geno Smith, Jared Goff, and Kirk Cousins are underrated by about 5 rating points 
+3. Andy Dalton and Daniel Jones should be close to the high 70s based on their production 
+
+
+Faces instead of dots! 
+```{r}
+#install.packages("ggimage")
+library(ggimage)
+library(ggpubr)
+#install.packages("jpeg")
+library(jpeg)
+#install.packages("png")
+library(png)
+
+
+headshots_path = "Headshots/"
+
+qb_full$player_png = paste0(headshots_path, qb_full$Player, '.png')
+```
+
+Create graph with images!
+```{r fig.height = 10, fig.width = 15}
+library(ggrepel)
+
+qb_boxscore_graph = ggplot(qb_full, aes(x = sum, y = OVR)) + 
+  geom_smooth(aes(x = sum, y = OVR), se = FALSE, color = '#D50A0A') +
+  geom_image(aes(image = player_png), size = 0.075, by="height") +
+  scale_size_identity() +
+  geom_label(aes(label = Player,  fill = `QB Cluster`), vjust = 2) +
+  theme_classic() +
+  labs(title = '2023 QB Box Score Stats vs Madden 24 Rating',
+     subtitle = 'Starting QBs production impacts Madden Rating most for above average QBs, at the > 80 overall tier',
+    x = 'Sum of Standardized Box Score Metrics',
+       y = 'Madden 24 Overall')
+
+qb_boxscore_graph
+
+png("Graphs/QB_Box_Score_VS_Madden_Rating.png", width = 1200, height = 700)
+print(qb_boxscore_graph)
+dev.off()
+```
+
+
+
+
+Advanced QB Box Score Stats
+```{r fig.height = 10, fig.width = 15}
+
+qbstats_advanced = read.csv('QB Rankings - AdvancedStatsExp.csv')
+
+qbstats_advanced_standardized = qbstats_advanced
+qbstats_advanced_standardized[2:13] <- as.data.frame(scale(qbstats_advanced_standardized[2:13]))
+
+#swap bad values to negative
+qbstats_advanced_standardized$Bad. <- qbstats_advanced_standardized$Bad. * -1
+qbstats_advanced_standardized$YAC.Cmp <- qbstats_advanced_standardized$YAC.Cmp * -1
+
+#standardized sum
+qbstats_advanced_standardized[2:14] = 
+  qbstats_advanced_standardized[2:13] %>%
+    mutate(sum = rowSums(.))
+
+#left join
+qbstats_advanced_standardized_ratings = qbstats_advanced_standardized %>%
+  left_join(qb_maddenratings, by = c('Player')) %>%
+  arrange(desc(sum))
+
+#table for graph 
+qb_full_advanced = qbstats_advanced_standardized_ratings %>%
+  select('Player', 'sum', 'OVR') %>%
+  na.omit() 
+
+#kmeans
+km <- kmeans(qb_full_advanced[,2:3], centers = 6, nstart = 25)
+fviz_cluster(km, data = qb_full_advanced[,2:3])
+
+```
+
+- CPOE: completion % over expected
+- Bad%: Percentage of poor throws per pass attempt, excluding spikes and throwaways
+- OnTgt%: Percentage of on-target throws per pass attempt, excluding spikes and throwaways
+- ANY/A -- Adjusted Net Yards per Pass Attempt
+  (Passing Yards - Sack Yards + (20 * Passing TD) - (45 * Interceptions)) / (Passes Attempted + Times Sacked)
+  Minimum 14 attempts per scheduled game to qualify as leader.
+  Minimum 1500 pass attempts to qualify as career leader.
+- IAY/PA -- Intended air yards per pass attempt - Average depth of target, whether completed or not
+- CAY/Cmp -- Completed air yards per completion - yards the ball traveled in the air past the line of scrimmage prior to a completion
+- YAC/Cmp -- Pass yards after catch per completion
+- Drop% -- Percentage of passes dropped per pass attempt, excluding spikes and throwaways
+
+
+```{r fig.height = 10, fig.width = 15}
+
+#cluster
+qb_full_advanced$cluster = km$cluster
+qb_full_advanced$`QB Cluster` = ifelse(qb_full_advanced$cluster == 4, "Tier 3: Above Average, Consistent Starting QBs, but One-Dimensional", 
+                          ifelse(qb_full_advanced$cluster == 6, "Tier 2: Top QB Starters, Elite Impact or Legacy",
+                            ifelse(qb_full_advanced$cluster == 5, "Tier Tua!",
+                              ifelse(qb_full_advanced$cluster == 2, "Tier 1: The Elite 3 QBs",
+                                ifelse(qb_full_advanced$cluster == 1, "Tier 5: Questionable Starting QBs",
+                                  ifelse(qb_full_advanced$cluster == 3, "Tier 4: Below Average Passing QBs, but Above Average Playmaking QBs",
+                                       "Not Elite"))))))
+
+#add images
+qb_full_advanced$player_png = paste0(headshots_path, qb_full_advanced$Player, '.png')
+
+
+#graph
+qb_advanced_graph = ggplot(qb_full_advanced, aes(x = sum, y = OVR)) + 
+  geom_smooth(aes(x = sum, y = OVR), se = FALSE, color = '#D50A0A') +
+  geom_image(aes(image = player_png), size = 0.075, by="height") +
+  scale_size_identity() +
+  geom_label(aes(label = Player,  fill = `QB Cluster`), vjust = 2) +
+  theme_classic() +
+  labs(title = '2023 QB Advanced Stats vs Madden 24 Rating',
+     subtitle = 'Madden Ratings follow a pretty clear growth, with some logical tier breaks .... and then theres Tua!',
+    x = 'Sum of Standardized Box Score Metrics',
+       y = 'Madden 24 Overall')
+
+qb_advanced_graph
+
+png("Graphs/QB_AdvancedVS_Madden_Rating.png", width = 1200, height = 700)
+print(qb_advanced_graph)
+dev.off()
+```
+-- Overall, the difference in Madden Ratings show to be a bit over-differentiated between the top-middle tier of QBs and the middle-tiers
+-- This is where most of the community has Josh Allen vs Joe Burrow, with Allen having a clear edge over Burrow stats wise, but pure box score had Burrow ahead
+-- Jalen Hurts earns his flowers here as a Top 5 QB by advanced passing numbers, a lot more than the box score showed
+-- With none of these being cumulative stats, we see less distinction between most of the starting QBs, which could say that some of these Tier 3 QBs could provide a lot more value in better situations
+-- Tier 4 can be pretty controversial, especially when side by side with Tier 3, with many of these as elite runners, but questionable numbers going into this year, that many expect them to turn around, but not all of them will.
+-- Tua is just Tua, but his WR help does show up clearly in the data! He has one of the highest Bad Throw %s, but its cancelled out by the top numbers in Adjusted Net Yards per Attempt, Intended Air Yards per Attempt, and Completed air yards per completion, indications of the elite passing game in Miami, which he is at the forefront of.
+
+
+
